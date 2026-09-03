@@ -6,6 +6,7 @@ Two-player blackjack over TCP, played in the terminal. One player hosts, the oth
 
 ```sh
 brew tap kwansing14/tap https://github.com/kwansing14/blackjack-tui
+brew trust kwansing14/tap
 brew install blackjack
 ```
 
