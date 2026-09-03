@@ -63,7 +63,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some("host") => {
             let port = args.get(1).map(String::as_str).unwrap_or("7878");
             let listener = TcpListener::bind(format!("0.0.0.0:{port}"))?;
+            // ponytail: UDP connect sends nothing; just makes the OS pick the outbound interface
+            let ip = std::net::UdpSocket::bind("0.0.0.0:0")
+                .and_then(|s| s.connect("8.8.8.8:80").and_then(|_| s.local_addr()))
+                .map(|a| a.ip().to_string())
+                .unwrap_or_else(|_| "<your-ip>".into());
             println!("waiting for player 2 on port {port} ...");
+            println!("player 2 runs:  blackjack join {ip}:{port}");
             let (stream, peer) = listener.accept()?;
             println!("player 2 connected from {peer}");
             (stream, 0usize)
