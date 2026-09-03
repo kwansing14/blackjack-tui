@@ -2,16 +2,16 @@
 
 Two-player blackjack over TCP, played in the terminal. One player hosts, the other joins.
 
-## Install
+## Install (Homebrew, no Rust needed)
 
 ```sh
-brew install rust          # or https://rustup.rs on Linux/Windows
-cargo install --git https://github.com/kwansing14/blackjack-tui
+brew tap kwansing14/tap https://github.com/kwansing14/blackjack-tui
+brew install blackjack
 ```
 
-This puts a `blackjack` command in `~/.cargo/bin`. Re-run the second line to update.
+Homebrew builds it locally; Rust is pulled in as a build-only dependency.
 
-Working from a clone instead: `cargo install --path .`
+With Rust already installed: `cargo install --git https://github.com/kwansing14/blackjack-tui`
 
 ## Run
 
