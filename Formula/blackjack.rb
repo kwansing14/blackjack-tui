@@ -1,5 +1,5 @@
 class Blackjack < Formula
-  desc "Two-player blackjack over TCP, played in the terminal"
+  desc "Two-player blackjack in the terminal, over the internet"
   homepage "https://github.com/kwansing14/blackjack-tui"
   version "0.1.0"
 

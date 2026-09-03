@@ -1,6 +1,9 @@
 # blackjack
 
-Two-player blackjack over TCP, played in the terminal. One player hosts, the other joins.
+Two-player blackjack in the terminal. One player hosts, the other joins with a
+4-letter room code. Works across any network: both clients connect out to a tiny
+Cloudflare Worker (a Durable Object per room) that relays messages. No port
+forwarding, no IPs.
 
 ## Install (Homebrew, no Rust needed)
 
@@ -16,21 +19,19 @@ With Rust already installed: `cargo install --git https://github.com/kwansing14/
 
 ## Run
 
-Host (listens on port 7878 by default). It prints the exact join command for player 2:
+Host:
 
 ```sh
 blackjack host
-blackjack host 9000      # custom port
+# room KQZP open, waiting for player 2 ...
+# player 2 runs:  blackjack join KQZP
 ```
 
-Player 2, on another machine:
+Player 2, anywhere:
 
 ```sh
-blackjack join <host-ip>:7878
+blackjack join KQZP
 ```
-
-Same machine for testing: use `127.0.0.1`. Over the internet the host needs to
-port-forward 7878 (or use something like Tailscale) and share their public IP.
 
 ## Controls
 
@@ -42,3 +43,28 @@ port-forward 7878 (or use something like Tailscale) and share their public IP.
 | `q` | Quit |
 
 Type the key and press Enter.
+
+## Relay (Cloudflare Worker)
+
+The binary defaults to the relay in `src/net.rs` (`DEFAULT_SERVER`). To run your
+own, deploy `worker/` with a free Cloudflare account:
+
+```sh
+cd worker
+npm install
+npx wrangler login
+npx wrangler deploy      # prints https://blackjack-relay.<you>.workers.dev
+```
+
+Then either change `DEFAULT_SERVER` and rebuild, or point clients at it:
+
+```sh
+BLACKJACK_SERVER=wss://blackjack-relay.<you>.workers.dev blackjack host
+```
+
+Local testing: `npx wrangler dev` in `worker/`, then `BLACKJACK_SERVER=ws://localhost:8787`
+for both clients.
+
+The relay is a dumb pipe: the host runs the game and sends state snapshots, the
+joiner sends actions. The Worker just pairs two WebSockets by room code and
+forwards frames. Rooms cost nothing while idle (WebSocket hibernation).

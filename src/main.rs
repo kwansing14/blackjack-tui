@@ -5,11 +5,10 @@ use game::{hand_value, Action, Card, GameState, Outcome, Phase};
 use net::{Event, Msg};
 use std::error::Error;
 use std::io::Write;
-use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc;
 
 fn usage() -> ! {
-    eprintln!("usage: blackjack host [port]\n       blackjack join <ip:port>");
+    eprintln!("usage: blackjack host\n       blackjack join <CODE>");
     std::process::exit(2);
 }
 
@@ -26,7 +25,11 @@ fn render(state: &GameState, me: usize) -> String {
     };
     out += &format!("Dealer:   {dealer}\n");
     for (i, hand) in state.players.iter().enumerate() {
-        let marker = if state.phase == Phase::PlayerTurn(i) { ">" } else { " " };
+        let marker = if state.phase == Phase::PlayerTurn(i) {
+            ">"
+        } else {
+            " "
+        };
         let you = if i == me { " (you)" } else { "      " };
         out += &format!("{marker} Player {}{you}: {}", i + 1, cards(hand));
         if !hand.is_empty() {
@@ -44,7 +47,11 @@ fn render(state: &GameState, me: usize) -> String {
             };
         }
         if matches!(state.phase, Phase::WaitingForReady | Phase::RoundOver) {
-            out += if state.ready[i] { "  [ready]" } else { "  [not ready]" };
+            out += if state.ready[i] {
+                "  [ready]"
+            } else {
+                "  [not ready]"
+            };
         }
         out.push('\n');
     }
@@ -59,39 +66,28 @@ fn render(state: &GameState, me: usize) -> String {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let (mut stream, me) = match args.first().map(String::as_str) {
+    let (tx, rx) = mpsc::channel();
+    let (out, me) = match args.first().map(String::as_str) {
         Some("host") => {
-            let port = args.get(1).map(String::as_str).unwrap_or("7878");
-            let listener = TcpListener::bind(format!("0.0.0.0:{port}"))?;
-            // ponytail: UDP connect sends nothing; just makes the OS pick the outbound interface
-            let ip = std::net::UdpSocket::bind("0.0.0.0:0")
-                .and_then(|s| s.connect("8.8.8.8:80").and_then(|_| s.local_addr()))
-                .map(|a| a.ip().to_string())
-                .unwrap_or_else(|_| "<your-ip>".into());
-            println!("waiting for player 2 on port {port} ...");
-            println!("player 2 runs:  blackjack join {ip}:{port}");
-            let (stream, peer) = listener.accept()?;
-            println!("player 2 connected from {peer}");
-            (stream, 0usize)
+            let code: String = (0..4)
+                .map(|_| (b'A' + rand::random_range(0..26u8)) as char)
+                .collect();
+            let out = net::connect(&code, "host", tx.clone())?;
+            println!("room {code} open, waiting for player 2 ...");
+            println!("player 2 runs:  blackjack join {code}");
+            (out, 0usize)
         }
         Some("join") => {
-            let addr = args.get(1).unwrap_or_else(|| usage());
-            (TcpStream::connect(addr)?, 1usize)
+            let code = args.get(1).unwrap_or_else(|| usage()).to_uppercase();
+            (net::connect(&code, "join", tx.clone())?, 1usize)
         }
         _ => usage(),
     };
-    stream.set_nodelay(true)?;
     let is_host = me == 0;
-
-    let (tx, rx) = mpsc::channel();
-    net::spawn_reader(stream.try_clone()?, tx.clone());
     net::spawn_input(tx);
 
     let mut state = GameState::new();
     let mut shoe = Vec::new();
-    if is_host {
-        net::send(&mut stream, &Msg::State(state.clone()))?;
-    }
     print!("{}", render(&state, me));
     std::io::stdout().flush()?;
 
@@ -100,7 +96,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut changed = false;
         match rx.recv()? {
             Event::Line(line) => match line.trim() {
-                "q" | "quit" => return Ok(()),
+                "q" | "quit" => {
+                    drop(out);
+                    std::thread::sleep(std::time::Duration::from_millis(100)); // let the socket thread send Close
+                    return Ok(());
+                }
                 "h" | "hit" => local_action = Some(Action::Hit),
                 "s" | "stand" => local_action = Some(Action::Stand),
                 "r" | "ready" => local_action = Some(Action::Ready),
@@ -109,7 +109,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             },
             Event::Net(Msg::Action(a)) if is_host => {
                 state.apply(1, a, &mut shoe);
-                net::send(&mut stream, &Msg::State(state.clone()))?;
+                net::send(&out, Msg::State(state.clone()));
                 changed = true;
             }
             Event::Net(Msg::State(s)) if !is_host => {
@@ -117,6 +117,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                 changed = true;
             }
             Event::Net(_) => {} // wrong direction, ignore
+            Event::Peer => {
+                if is_host {
+                    println!("player 2 connected");
+                    net::send(&out, Msg::State(state.clone()));
+                }
+            }
             Event::Disconnected => {
                 println!("\nother player disconnected, bye");
                 return Ok(());
@@ -126,10 +132,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         if let Some(a) = local_action {
             if is_host {
                 state.apply(0, a, &mut shoe);
-                net::send(&mut stream, &Msg::State(state.clone()))?;
+                net::send(&out, Msg::State(state.clone()));
                 changed = true;
             } else {
-                net::send(&mut stream, &Msg::Action(a))?;
+                net::send(&out, Msg::Action(a));
                 // client waits for the host's State snapshot before redrawing
             }
         }
