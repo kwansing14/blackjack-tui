@@ -10,7 +10,7 @@ brew trust kwansing14/tap
 brew install blackjack
 ```
 
-Homebrew builds it locally; Rust is pulled in as a build-only dependency.
+Installs a prebuilt macOS binary. No Rust or other dependencies.
 
 With Rust already installed: `cargo install --git https://github.com/kwansing14/blackjack-tui`
 
