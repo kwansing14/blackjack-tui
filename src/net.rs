@@ -9,7 +9,7 @@ use tungstenite::stream::MaybeTlsStream;
 use tungstenite::Message;
 
 /// Cloudflare Worker in ./worker. Override with BLACKJACK_SERVER=wss://...
-pub const DEFAULT_SERVER: &str = "wss://blackjack-relay.kwansing14.workers.dev";
+pub const DEFAULT_SERVER: &str = "wss://blackjack-relay.kwansing.workers.dev";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Msg {
