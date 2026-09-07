@@ -202,3 +202,13 @@ clients with `BLACKJACK_SERVER=ws://localhost:8787`.
 The relay is a dumb pipe: the host runs the game and sends state snapshots, the
 joiner sends actions. The Worker just pairs two WebSockets by room code and
 forwards frames, using WebSocket hibernation while connections are idle.
+
+## Publishing a release (maintainers)
+
+1. Set the new version in `Cargo.toml`, run `cargo check` to update `Cargo.lock`, and commit.
+2. Run `./scripts/release.sh`.
+
+The script builds the two macOS binaries, tags and pushes, creates the GitHub
+release with the tarballs attached, rewrites `Formula/blackjack.rb` with the new
+URLs and checksums, and pushes that commit. Homebrew users then get the new
+version with `brew update && brew upgrade blackjack`.
