@@ -1,6 +1,6 @@
 [package]
 name = "blackjack"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 
 [dependencies]
@@ -8,4 +8,4 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rand = "0.10"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
+tungstenite = { version = "0.30.0", features = ["rustls-tls-native-roots"] }

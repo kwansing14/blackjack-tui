@@ -61,10 +61,6 @@ brew install blackjack
 
 Installs a prebuilt macOS binary. No Rust or other dependencies.
 
-> The published Homebrew `v0.1.0` binary predates the hosted-relay fixes. Until a
-> newer release is published, use the Rust installation above or run the current
-> source checkout directly.
-
 ### 2. Player 1 hosts a room
 
 On Player 1's computer, run:
@@ -168,6 +164,13 @@ hosted Cloudflare relay automatically.
   add `$HOME/.cargo/bin` to `PATH`.
 - **Connection failure**: Confirm both players have internet access and that
   outbound secure WebSocket traffic on port 443 is allowed.
+- **`invalid peer certificate: UnknownIssuer`**: Versions before 0.1.2 trusted
+  only Mozilla's root certificates, so they failed behind corporate TLS-inspection
+  proxies such as Zscaler. Upgrade to 0.1.2 or later, which uses the system trust
+  store.
+- **`relay said 426 Upgrade Required`**: Something between you and the relay is
+  stripping the WebSocket upgrade. Corporate proxies commonly do this. Try another
+  network, such as a phone hotspot.
 - **A player disconnected**: The room ends when either player quits or loses
   their connection. Player 1 can run `blackjack host` again to create a new room.
 
