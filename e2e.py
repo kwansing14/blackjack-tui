@@ -1,6 +1,6 @@
 # e2e check: run `npx wrangler dev` in worker/, then `python3 e2e.py` from repo root.
 import subprocess, re, time, os, sys
-env = dict(os.environ, BLACKJACK_SERVER=os.environ.get("BLACKJACK_SERVER","ws://localhost:8787"))
+env = dict(os.environ, BLACKJACK_SERVER=os.environ.get("BLACKJACK_SERVER","http://localhost:8787"))
 B = "target/debug/blackjack"
 def spawn(*a): return subprocess.Popen([B,*a], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, text=True)
 def finish(p, name):

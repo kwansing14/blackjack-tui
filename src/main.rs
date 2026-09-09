@@ -97,8 +97,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         match rx.recv()? {
             Event::Line(line) => match line.trim() {
                 "q" | "quit" => {
-                    drop(out);
-                    std::thread::sleep(std::time::Duration::from_millis(100)); // let the socket thread send Close
+                    out.close(); // tells the relay, so the other player hears now
                     return Ok(());
                 }
                 "h" | "hit" => local_action = Some(Action::Hit),
@@ -109,7 +108,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             },
             Event::Net(Msg::Action(a)) if is_host => {
                 state.apply(1, a, &mut shoe);
-                net::send(&out, Msg::State(state.clone()));
+                out.send(Msg::State(state.clone()));
                 changed = true;
             }
             Event::Net(Msg::State(s)) if !is_host => {
@@ -120,11 +119,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             Event::Peer => {
                 if is_host {
                     println!("player 2 connected");
-                    net::send(&out, Msg::State(state.clone()));
+                    out.send(Msg::State(state.clone()));
                 }
             }
-            Event::Disconnected => {
-                println!("\nother player disconnected, bye");
+            Event::Disconnected(why) => {
+                println!("\n{why}, bye");
                 return Ok(());
             }
         }
@@ -132,10 +131,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         if let Some(a) = local_action {
             if is_host {
                 state.apply(0, a, &mut shoe);
-                net::send(&out, Msg::State(state.clone()));
+                out.send(Msg::State(state.clone()));
                 changed = true;
             } else {
-                net::send(&out, Msg::Action(a));
+                out.send(Msg::Action(a));
                 // client waits for the host's State snapshot before redrawing
             }
         }

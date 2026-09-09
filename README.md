@@ -1,22 +1,23 @@
 # blackjack
 
 Two-player blackjack in the terminal. One player hosts, the other joins with a
-4-letter room code. Works across any network: both clients connect out to a tiny
-Cloudflare Worker (a Durable Object per room) that relays messages. No port
-forwarding, no IPs.
+4-letter room code. Works across any network: both clients talk over plain HTTPS
+to a tiny Cloudflare Worker (a Durable Object per room) that relays messages. No
+port forwarding, no IPs, no WebSockets, so it also works behind corporate proxies.
 
 ## How online play works
 
 ```text
-Player 1 CLI ── secure WebSocket ──┐
-                                   ├── Cloudflare Worker ── Room Durable Object
-Player 2 CLI ── secure WebSocket ──┘                         (for example, KQZP)
+Player 1 CLI ── HTTPS (long-poll) ──┐
+                                    ├── Cloudflare Worker ── Room Durable Object
+Player 2 CLI ── HTTPS (long-poll) ──┘                         (for example, KQZP)
 ```
 
-Both players connect to the hosted relay at
-`blackjack-relay.kwansing.workers.dev`. The room code sends both connections to
-the same Durable Object. The two computers never connect directly to each
-other.
+Both players talk to the hosted relay at
+`blackjack-relay.kwansing.workers.dev` using ordinary HTTPS requests: each client
+posts its moves and long-polls for the other player's. The room code sends both
+players to the same Durable Object. The two computers never connect directly to
+each other.
 
 Players only need the `blackjack` program and an internet connection. They do
 not need:
@@ -162,17 +163,20 @@ hosted Cloudflare relay automatically.
 - **The round does not start**: Both players must type `r` and press Enter.
 - **`command not found: blackjack`**: Open a new terminal after installation or
   add `$HOME/.cargo/bin` to `PATH`.
-- **Connection failure**: Confirm both players have internet access and that
-  outbound secure WebSocket traffic on port 443 is allowed.
+- **`cannot reach relay`**: Confirm both players have internet access and that
+  outbound HTTPS on port 443 is allowed. The client honours `HTTPS_PROXY` if your
+  network needs an explicit proxy.
 - **`invalid peer certificate: UnknownIssuer`**: Versions before 0.1.2 trusted
   only Mozilla's root certificates, so they failed behind corporate TLS-inspection
   proxies such as Zscaler. Upgrade to 0.1.2 or later, which uses the system trust
   store.
-- **`relay said 426 Upgrade Required`**: Something between you and the relay is
-  stripping the WebSocket upgrade. Corporate proxies commonly do this. Try another
-  network, such as a phone hotspot.
-- **A player disconnected**: The room ends when either player quits or loses
-  their connection. Player 1 can run `blackjack host` again to create a new room.
+- **`usage: POST /room/<CODE>/...` or `426 Upgrade Required` when hosting or
+  joining**: Versions before 0.2.0 used WebSockets, which corporate proxies such as
+  Zscaler block, and which the relay no longer speaks. Upgrade to 0.2.0 or later,
+  which uses plain HTTPS long-polling. Both players need 0.2.0 or later.
+- **`other player quit` / `other player timed out`**: The room ends when either
+  player quits or is unreachable for about 45 seconds. Player 1 can run
+  `blackjack host` again to create a new room.
 
 ## Host your own relay (optional)
 
@@ -191,20 +195,23 @@ Then either change `DEFAULT_SERVER` and rebuild, or point both clients at it:
 
 ```sh
 # Host
-BLACKJACK_SERVER=wss://blackjack-relay.<you>.workers.dev blackjack host
+BLACKJACK_SERVER=https://blackjack-relay.<you>.workers.dev blackjack host
 
 # Player 2
-BLACKJACK_SERVER=wss://blackjack-relay.<you>.workers.dev blackjack join KQZP
+BLACKJACK_SERVER=https://blackjack-relay.<you>.workers.dev blackjack join KQZP
 ```
 
 Both players must set `BLACKJACK_SERVER` to the same address.
 
 For local relay testing, run `npx wrangler dev` inside `worker/`, then start both
-clients with `BLACKJACK_SERVER=ws://localhost:8787`.
+clients with `BLACKJACK_SERVER=http://localhost:8787`.
 
 The relay is a dumb pipe: the host runs the game and sends state snapshots, the
-joiner sends actions. The Worker just pairs two WebSockets by room code and
-forwards frames, using WebSocket hibernation while connections are idle.
+joiner sends actions. Each player `POST`s messages to `/room/CODE/send` and
+long-polls `/room/CODE/poll`, which the Worker holds for up to 20 seconds until
+something arrives. A player silent for 45 seconds is treated as gone and the room
+ends for both. There are no WebSockets, so it works through proxies that only
+pass plain HTTPS.
 
 ## Publishing a release (maintainers)
 
