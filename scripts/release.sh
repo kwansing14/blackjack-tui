@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
-# Publish a new release: build macOS binaries, create the GitHub release,
-# and update the Homebrew formula to point at it.
+# Publish a release: build macOS binaries, tag, create the GitHub release, and point the
+# Homebrew formula at it. Safe to re-run: steps that already happened are skipped, so a
+# run that died halfway (network, gh auth) is finished by running the same command again.
 #
 # Usage:
 #   1. Set the new version in Cargo.toml and commit it.
-#   2. Run: ./scripts/release.sh
+#   2. npm run release        (same as ./scripts/release.sh)
 #
 # Requires: cargo with both macOS targets, gh (logged in), a clean tree.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-REPO="kwansing14/blackjack-tui"
+REPO="kwansing14/blackjack-tui" # only for the download URLs; git and gh use the origin remote
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 TAG="v$VERSION"
 TARGETS=(aarch64-apple-darwin x86_64-apple-darwin)
@@ -27,11 +28,6 @@ if [[ -n "$(git status --porcelain)" ]]; then
   exit 1
 fi
 
-if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-  echo "error: tag $TAG already exists" >&2
-  exit 1
-fi
-
 echo "==> Releasing $TAG"
 
 echo "==> Building"
@@ -42,12 +38,24 @@ for target in "${TARGETS[@]}"; do
 done
 
 echo "==> Tagging and pushing"
-git tag "$TAG"
+if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+  if [[ "$(git rev-parse "$TAG^{commit}")" != "$(git rev-parse HEAD)" ]]; then
+    echo "error: tag $TAG exists but points at another commit; bump the version in Cargo.toml" >&2
+    exit 1
+  fi
+  echo "tag $TAG already exists, reusing it"
+else
+  git tag "$TAG"
+fi
 git push origin main "$TAG"
 
-echo "==> Creating GitHub release"
-gh release create "$TAG" "$DIST"/blackjack-*.tar.gz \
-  --repo "$REPO" --title "$TAG" --generate-notes
+echo "==> GitHub release"
+if gh release view "$TAG" >/dev/null 2>&1; then
+  echo "release $TAG already exists, replacing its assets"
+  gh release upload "$TAG" "$DIST"/* --clobber
+else
+  gh release create "$TAG" "$DIST"/* --generate-notes
+fi
 
 echo "==> Updating Formula/blackjack.rb"
 sha_arm=$(shasum -a 256 "$DIST/blackjack-aarch64-apple-darwin.tar.gz" | cut -d' ' -f1)
@@ -79,9 +87,13 @@ class Blackjack < Formula
 end
 RUBY
 
-git add Formula/blackjack.rb
-git commit -m "Formula: $TAG"
-git push origin main
+if git diff --quiet Formula/blackjack.rb; then
+  echo "formula already points at $TAG"
+else
+  git add Formula/blackjack.rb
+  git commit -m "Formula: $TAG"
+  git push origin main
+fi
 
 rm -rf "$DIST"
 echo "==> Done. Users update with: brew update && brew upgrade blackjack"

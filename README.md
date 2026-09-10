@@ -216,9 +216,12 @@ pass plain HTTPS.
 ## Publishing a release (maintainers)
 
 1. Set the new version in `Cargo.toml`, run `cargo check` to update `Cargo.lock`, and commit.
-2. Run `./scripts/release.sh`.
+2. Run `npm run release`.
 
 The script builds the two macOS binaries, tags and pushes, creates the GitHub
 release with the tarballs attached, rewrites `Formula/blackjack.rb` with the new
 URLs and checksums, and pushes that commit. Homebrew users then get the new
 version with `brew update && brew upgrade blackjack`.
+
+If a run dies partway (network, `gh` login), fix the cause and run
+`npm run release` again. Steps that already happened are skipped.
