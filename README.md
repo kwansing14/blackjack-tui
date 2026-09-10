@@ -1,7 +1,7 @@
 # blackjack
 
-Two-player blackjack in the terminal. One player hosts, the other joins with a
-4-letter room code. Works across any network: both clients talk over plain HTTPS
+Two-player blackjack in the terminal. One player hosts and is the dealer, the
+other joins with a 4-letter room code and plays against them. Works across any network: both clients talk over plain HTTPS
 to a tiny Cloudflare Worker (a Durable Object per room) that relays messages. No
 port forwarding, no IPs, no WebSockets, so it also works behind corporate proxies.
 
@@ -100,15 +100,18 @@ Only one Player 2 can join a room.
 ### 4. Start and play the round
 
 Both players type `r` and press Enter. Cards are dealt once both players are
-ready.
+ready: two to the player (Player 2) and two to the dealer (Player 1, the host).
+The player sees only the dealer's first card until their own turn is over.
 
-The `>` marker shows whose turn it is. On your turn:
+The `>` marker shows whose turn it is. Player 2 plays first:
 
 - type `h` and press Enter to hit
 - type `s` and press Enter to stand
 
-Player 1 takes the first turn, followed by Player 2. The dealer then plays
-automatically, and both results are displayed.
+Then the dealer's second card is revealed and Player 1 plays the dealer's hand
+the same way. The player wins with a higher total than the dealer or when the
+dealer busts, loses with a lower total, and pushes on a tie. A player who busts
+loses at once and the dealer does not play. A hand on 21 stands automatically.
 
 After the round, both players can type `r` and press Enter to play again. Either
 player can type `q` and press Enter to quit; this also disconnects the other
@@ -118,8 +121,8 @@ player.
 
 | Command | Purpose |
 |---------|---------|
-| `blackjack host` | Create a room and print its code |
-| `blackjack join KQZP` | Join an existing room using its code |
+| `blackjack host` | Create a room, print its code, and play as the dealer |
+| `blackjack join KQZP` | Join an existing room using its code and play against the dealer |
 
 All in-game controls require Enter:
 
@@ -153,6 +156,9 @@ cargo run --release -- join KQZP
 
 The first run compiles the program and can take a minute. Both commands use the
 hosted Cloudflare relay automatically.
+
+Both computers must run this updated version for host-as-dealer play. To replace
+an older installed binary with your checkout, run `cargo install --path . --force`.
 
 ## Troubleshooting
 

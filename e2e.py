@@ -13,6 +13,15 @@ join = spawn("join", code.lower()); time.sleep(1)
 bad = subprocess.run([B,"join",code], capture_output=True, text=True, env=env, timeout=5); print("3RD JOINER:", bad.returncode, bad.stderr.strip())
 nosuch = subprocess.run([B,"join","ZZZZ"], capture_output=True, text=True, env=env, timeout=5); print("NO ROOM:", nosuch.returncode, nosuch.stderr.strip())
 def cmd(p, s): p.stdin.write(s+"\n"); p.stdin.flush(); time.sleep(0.6)
-cmd(host,"r"); cmd(join,"r"); cmd(host,"s"); cmd(join,"s"); cmd(join,"q")
+cmd(host,"r"); cmd(join,"r"); cmd(join,"s"); cmd(host,"s"); cmd(join,"q")  # player first, then the host as dealer
 jout = finish(join,"JOIN"); hout = finish(host,"HOST")
 print("---- HOST ----"); print(hout[-1000:]); print("---- JOIN tail ----"); print(jout[-500:])
+assert bad.returncode != 0 and "room full" in bad.stderr
+assert nosuch.returncode != 0 and "no such room" in nosuch.stderr
+assert "Dealer (you):" in hout and "Player (you):" in jout
+assert "Player (you):" not in hout and "Dealer (you):" not in jout
+assert re.search(r"  (WIN|LOSE|PUSH)", hout), "host did not finish the round"
+assert re.search(r"  (WIN|LOSE|PUSH)", jout), "joiner did not finish the round"
+assert "other player quit" in hout
+assert host.returncode == 0 and join.returncode == 0
+print("PASS: host played the dealer, joiner played the player, and both finished")
