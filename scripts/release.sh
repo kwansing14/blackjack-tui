@@ -39,8 +39,10 @@ done
 
 echo "==> Tagging and pushing"
 if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-  if [[ "$(git rev-parse "$TAG^{commit}")" != "$(git rev-parse HEAD)" ]]; then
-    echo "error: tag $TAG exists but points at another commit; bump the version in Cargo.toml" >&2
+  # A tag from an earlier failed run is fine as long as nothing that goes into the
+  # binary changed since. Fixing the release script between attempts is the usual case.
+  if ! git diff --quiet "$TAG" HEAD -- Cargo.toml Cargo.lock src; then
+    echo "error: tag $TAG exists but the binary sources changed since; bump the version in Cargo.toml" >&2
     exit 1
   fi
   echo "tag $TAG already exists, reusing it"
