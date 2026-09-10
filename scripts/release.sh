@@ -88,7 +88,7 @@ base="https://github.com/$REPO/releases/download/$TAG"
 
 cat > Formula/blackjack.rb <<RUBY
 class Blackjack < Formula
-  desc "Two-player blackjack in the terminal, over the internet"
+  desc "Blackjack in the terminal for a dealer and up to nine players, over the internet"
   homepage "https://github.com/$REPO"
   version "$VERSION"
 
