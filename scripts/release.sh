@@ -51,11 +51,33 @@ git push origin main "$TAG"
 
 echo "==> GitHub release"
 if gh release view "$TAG" >/dev/null 2>&1; then
-  echo "release $TAG already exists, replacing its assets"
-  gh release upload "$TAG" "$DIST"/* --clobber
+  echo "release $TAG already exists, reusing it"
 else
-  gh release create "$TAG" "$DIST"/* --generate-notes
+  # no assets on this line: gh deletes the whole release if any asset upload fails
+  gh release create "$TAG" --generate-notes
 fi
+
+# Upload one file at a time and trust the release's asset list, not gh's exit status.
+# The proxy can drop the reply after GitHub has stored the file; gh then retries, gets
+# "ReleaseAsset.name already exists", and reports failure for an upload that worked.
+uploaded_size() {
+  gh release view "$TAG" --json assets --jq ".assets[] | select(.name == \"$1\") | .size"
+}
+for f in "$DIST"/*; do
+  name=$(basename "$f")
+  size=$(stat -f%z "$f")
+  for attempt in 1 2 3; do
+    gh release upload "$TAG" "$f" --clobber || true
+    if [[ "$(uploaded_size "$name")" == "$size" ]]; then
+      break
+    fi
+    if [[ $attempt == 3 ]]; then
+      echo "error: $name did not upload after 3 attempts; run again" >&2
+      exit 1
+    fi
+    echo "retrying $name"
+  done
+done
 
 echo "==> Updating Formula/blackjack.rb"
 sha_arm=$(shasum -a 256 "$DIST/blackjack-aarch64-apple-darwin.tar.gz" | cut -d' ' -f1)
