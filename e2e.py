@@ -20,6 +20,8 @@ assert bad.returncode != 0 and "room full" in bad.stderr
 assert nosuch.returncode != 0 and "no such room" in nosuch.stderr
 assert "Dealer (you):" in hout and "Player (you):" in jout
 assert "Player (you):" not in hout and "Dealer (you):" not in jout
+initial_tables = re.findall(r"===== Round 0 =====\n[^\n]*\[not ready\]\n[^\n]*\[not ready\]", jout)
+assert len(initial_tables) == 1, "joiner must display the initial table exactly once"
 assert re.search(r"  (WIN|LOSE|PUSH)", hout), "host did not finish the round"
 assert re.search(r"  (WIN|LOSE|PUSH)", jout), "joiner did not finish the round"
 assert "other player quit" in hout

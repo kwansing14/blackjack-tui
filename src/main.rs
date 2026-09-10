@@ -133,8 +133,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut state = GameState::new();
     let mut shoe = Vec::new();
-    print!("{}", render(&state, me));
-    std::io::stdout().flush()?;
+    // The joiner renders when the host's first state arrives.
+    if is_host {
+        print!("{}", render(&state, me));
+        std::io::stdout().flush()?;
+    }
 
     loop {
         let mut local_action = None;
