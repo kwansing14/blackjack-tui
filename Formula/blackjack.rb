@@ -1,15 +1,15 @@
 class Blackjack < Formula
-  desc "Two-player blackjack in the terminal, over the internet"
+  desc "Blackjack in the terminal for a dealer and up to nine players, over the internet"
   homepage "https://github.com/kwansing14/blackjack-tui"
-  version "0.2.2"
+  version "0.3.0"
 
   on_arm do
-    url "https://github.com/kwansing14/blackjack-tui/releases/download/v0.2.2/blackjack-aarch64-apple-darwin.tar.gz"
-    sha256 "cb1879a92438404bc29f27665fa77eb45fb5c7145e37b76031d375013f6043fb"
+    url "https://github.com/kwansing14/blackjack-tui/releases/download/v0.3.0/blackjack-aarch64-apple-darwin.tar.gz"
+    sha256 "d4b6ef8c4d9383c9fddcece64843e8ce6e7391a7a6b09b7f6dcaf0e741bd2c38"
   end
   on_intel do
-    url "https://github.com/kwansing14/blackjack-tui/releases/download/v0.2.2/blackjack-x86_64-apple-darwin.tar.gz"
-    sha256 "3a5a34e93a4a89c1b9aab253399f3fcc8c3b120bab48168fbda6cb3151d3948d"
+    url "https://github.com/kwansing14/blackjack-tui/releases/download/v0.3.0/blackjack-x86_64-apple-darwin.tar.gz"
+    sha256 "53ab6756979e4ba0336c6dce6ca3588ebb295ab60acd3f8e6b69f552b628bd3b"
   end
 
   def install
