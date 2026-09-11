@@ -10,7 +10,7 @@ use std::io::Write;
 use std::sync::mpsc;
 
 fn usage() -> ! {
-    eprintln!("usage: blackjack host\n       blackjack join <CODE>\n       blackjack scores\n       blackjack name [NEW]");
+    eprintln!("usage: blackjack host\n       blackjack join <CODE>\n       blackjack scores\n       blackjack name [NEW]\n       blackjack --version");
     std::process::exit(2);
 }
 
@@ -120,6 +120,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some("join") => ("join", args.get(1).unwrap_or_else(|| usage()).to_uppercase()),
         Some("scores") => return scores(),
         Some("name") => return rename(args.get(1).map(String::as_str)),
+        Some("--version" | "-V" | "version") => {
+            println!("blackjack {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
         _ => usage(),
     };
     let who = Profile::load_or_create()?; // may ask for a name; stdin is still ours here

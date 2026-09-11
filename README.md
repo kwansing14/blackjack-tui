@@ -144,6 +144,7 @@ room for everyone.
 | `blackjack scores` | Print the lifetime leaderboard kept by the relay |
 | `blackjack name` | Show the name and profile file this computer plays under |
 | `blackjack name Zed` | Change that name; your record on the scoreboard follows you |
+| `blackjack --version` | Print the installed version, useful when checking everyone is on the same one |
 
 All in-game controls require Enter:
 

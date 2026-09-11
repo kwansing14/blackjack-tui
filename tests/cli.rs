@@ -203,6 +203,16 @@ fn no_arguments_prints_usage_and_exits_2() {
 }
 
 #[test]
+fn version_is_the_one_in_cargo_toml() {
+    for flag in ["--version", "-V", "version"] {
+        let out = blackjack(&[flag], &dead_server());
+        assert!(out.status.success(), "{flag}: {}", text(&out.stderr));
+        assert_eq!(text(&out.stdout), format!("blackjack {}\n", env!("CARGO_PKG_VERSION")), "{flag}");
+        assert!(out.stderr.is_empty(), "{flag}: {}", text(&out.stderr));
+    }
+}
+
+#[test]
 fn join_without_a_code_prints_usage() {
     let out = blackjack(&["join"], &dead_server());
     assert_eq!(out.status.code(), Some(2));
@@ -215,7 +225,7 @@ fn an_unknown_command_prints_usage() {
     assert_eq!(out.status.code(), Some(2));
     let err = text(&out.stderr);
     assert!(err.contains("usage:"), "{err}");
-    assert!(err.contains("blackjack scores") && err.contains("blackjack name [NEW]"), "{err}");
+    assert!(err.contains("blackjack scores") && err.contains("blackjack name [NEW]") && err.contains("blackjack --version"), "{err}");
 }
 
 // ---- who you are -----------------------------------------------------------------------------
