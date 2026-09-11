@@ -1,20 +1,38 @@
 {
-  "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "blackjack-relay",
-  "main": "src/index.ts",
-  "compatibility_date": "2026-08-01",
-  "durable_objects": {
-    "bindings": [{ "name": "ROOM", "class_name": "Room" }]
-  },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
-  // The scoreboard. Local dev needs only `npm run migrate:local`. To deploy, create the database
-  // once with `npx wrangler d1 create blackjack-scores`, paste its id below, then `npm run migrate`.
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "blackjack-scores",
-      // "database_id": "<paste from wrangler d1 create>",
-      "migrations_dir": "migrations"
-    }
-  ]
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "blackjack-relay",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-08-01",
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "ROOM",
+				"class_name": "Room"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": [
+				"Room"
+			]
+		}
+	],
+	// The scoreboard. Local dev needs only `npm run migrate:local`. To deploy, create the database
+	// once with `npx wrangler d1 create blackjack-scores`, paste its id below, then `npm run migrate`.
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "blackjack-scores",
+			// "database_id": "<paste from wrangler d1 create>",
+			"migrations_dir": "migrations"
+		},
+		{
+			"binding": "blackjack_scores",
+			"database_name": "blackjack-scores",
+			"database_id": "adac094a-ce20-484d-af92-ca96c3142c9f",
+			"remote": true
+		}
+	]
 }
