@@ -31,6 +31,7 @@ const GIVE_UP: Duration = Duration::from_secs(40);
 pub enum Msg {
     Action(Action),
     State(Box<GameState>),
+    Say(String), // one line of chat, for the host to hang on the sender's seat
 }
 
 /// One player's settled hand, as the host reports it to the relay for the scoreboard.
@@ -47,7 +48,7 @@ pub struct Report {
     pub results: Vec<HandResult>,
 }
 
-/// One line of the lifetime leaderboard, as the relay answers `/scores`.
+/// One line of the week's leaderboard, as the relay answers `/scores`.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Row {
     pub name: String,
@@ -94,6 +95,8 @@ struct Envelope {
 #[derive(Deserialize)]
 struct Scores {
     rows: Vec<Row>,
+    #[serde(default)] // a relay from before the weekly window sends no label; the table just has no header
+    week: String,
 }
 
 #[derive(Clone)]
@@ -237,20 +240,22 @@ fn connect_to(server: &str, code: &str, role: &str, who: &Profile, events: Sende
     Ok((Conn { out, sender_gone }, ticket.seat))
 }
 
-/// The lifetime leaderboard from the relay, with `who`'s own row marked. Errors are the
-/// relay's words (an old relay answers with its usage line) or a transport failure.
-pub fn scores(who: &Profile) -> Result<Vec<Row>, Box<dyn Error>> {
+/// This week's leaderboard from the relay, with `who`'s own row marked, and the label for the
+/// window it covers. Errors are the relay's words (an old relay answers with its usage line) or
+/// a transport failure. The relay decides where the week starts; the client sends no dates.
+pub fn scores(who: &Profile) -> Result<(String, Vec<Row>), Box<dyn Error>> {
     scores_from(&server(), who)
 }
 
-fn scores_from(server: &str, who: &Profile) -> Result<Vec<Row>, Box<dyn Error>> {
+fn scores_from(server: &str, who: &Profile) -> Result<(String, Vec<Row>), Box<dyn Error>> {
     let relay = Relay { agent: agent(), room: server_url(server), token: String::new() };
     let body = serde_json::json!({ "id": who.id }).to_string();
     let (status, text) = relay.post("scores", &body, QUICK_TIMEOUT).map_err(|e| format!("cannot reach relay: {e}"))?;
     if status != 200 {
         return Err(reason(status, &text).into());
     }
-    Ok(serde_json::from_str::<Scores>(&text).map_err(|_| "bad reply from relay")?.rows)
+    let got: Scores = serde_json::from_str(&text).map_err(|_| "bad reply from relay")?;
+    Ok((got.week, got.rows))
 }
 
 fn disconnect(events: &Sender<Event>, why: String) {
@@ -380,6 +385,7 @@ mod tests {
         assert_eq!(msg(Msg::Action(Action::Hit)), r#"{"Action":"Hit"}"#);
         assert_eq!(msg(Msg::Action(Action::Stand)), r#"{"Action":"Stand"}"#);
         assert_eq!(msg(Msg::Action(Action::Ready)), r#"{"Action":"Ready"}"#);
+        assert_eq!(msg(Msg::Say("nice hand".into())), r#"{"Say":"nice hand"}"#);
         let mut g = GameState::new();
         g.seats[2] = Some(Seat { hand: vec![Card { rank: 1, suit: 2 }], ready: true, ..Default::default() });
         g.phase = Phase::PlayerTurn;
@@ -389,8 +395,8 @@ mod tests {
         assert_eq!(
             json,
             concat!(
-                r#"{"State":{"seats":[{"hand":[],"ready":false,"result":null,"name":"","tally":{"wins":0,"losses":0,"pushes":0}},null,"#,
-                r#"{"hand":[{"rank":1,"suit":2}],"ready":true,"result":null,"name":"","tally":{"wins":0,"losses":0,"pushes":0}},"#,
+                r#"{"State":{"seats":[{"hand":[],"ready":false,"result":null,"name":"","tally":{"wins":0,"losses":0,"pushes":0},"say":""},null,"#,
+                r#"{"hand":[{"rank":1,"suit":2}],"ready":true,"result":null,"name":"","tally":{"wins":0,"losses":0,"pushes":0},"say":""},"#,
                 r#"null,null,null,null,null,null,null],"phase":"PlayerTurn","turn":2,"round":3}}"#
             )
         );
@@ -398,10 +404,10 @@ mod tests {
             Msg::State(back) => assert_eq!(*back, g),
             other => panic!("decoded as {other:?}"),
         }
-        let seat = Seat { name: "bob".into(), tally: Tally { wins: 2, losses: 0, pushes: 1 }, ..Default::default() };
+        let seat = Seat { name: "bob".into(), tally: Tally { wins: 2, losses: 0, pushes: 1 }, say: "unlucky".into(), ..Default::default() };
         assert_eq!(
             serde_json::to_string(&seat).unwrap(),
-            r#"{"hand":[],"ready":false,"result":null,"name":"bob","tally":{"wins":2,"losses":0,"pushes":1}}"#
+            r#"{"hand":[],"ready":false,"result":null,"name":"bob","tally":{"wins":2,"losses":0,"pushes":1},"say":"unlucky"}"#
         );
     }
 
@@ -932,7 +938,7 @@ mod tests {
 
     #[test]
     fn scores_posts_our_id_and_reads_the_rows_back() {
-        let rows = serde_json::json!({ "rows": [
+        let rows = serde_json::json!({ "week": "14 sep - 20 sep", "rows": [
             { "name": "alice", "wins": 12, "losses": 8, "pushes": 2, "hands": 22, "you": false },
             { "name": "tester", "wins": 1, "losses": 0, "pushes": 0, "hands": 1, "you": true },
         ] });
@@ -940,7 +946,8 @@ mod tests {
             "/scores" => (200, rows.to_string()),
             _ => (404, "unknown action".into()),
         });
-        let rows = scores_from(&fake.server(), &who()).unwrap();
+        let (week, rows) = scores_from(&fake.server(), &who()).unwrap();
+        assert_eq!(week, "14 sep - 20 sep");
         assert_eq!(rows.len(), 2);
         assert_eq!((rows[0].name.as_str(), rows[0].wins, rows[0].you), ("alice", 12, false));
         assert_eq!((rows[1].name.as_str(), rows[1].hands, rows[1].you), ("tester", 1, true));
@@ -958,6 +965,14 @@ mod tests {
         let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let err = scores_from(&format!("http://127.0.0.1:{port}"), &who()).unwrap_err().to_string();
         assert!(err.starts_with("cannot reach relay: "), "{err}");
+    }
+
+    #[test]
+    fn scores_from_a_relay_that_names_no_week_still_reads() {
+        let body = r#"{"rows":[{"name":"alice","wins":1,"losses":0,"pushes":0,"hands":1,"you":false}]}"#;
+        let fake = FakeRelay::start(move |_| (200, body.into()));
+        let (week, rows) = scores_from(&fake.server(), &who()).unwrap();
+        assert_eq!((week.as_str(), rows.len()), ("", 1));
     }
 
     #[test]

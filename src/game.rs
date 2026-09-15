@@ -7,6 +7,10 @@ pub const DEALER: usize = 0;
 pub const MAX_PLAYERS: usize = 9;
 pub const SEATS: usize = MAX_PLAYERS + 1;
 
+/// Longest chat line a seat can show, past which it is cut. Short enough to sit at the end
+/// of a table line without pushing everything else off a narrow terminal.
+pub const MAX_SAY: usize = 24;
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Card {
     pub rank: u8, // 1 = Ace .. 13 = King
@@ -96,6 +100,8 @@ pub struct Seat {
     pub name: String, // empty until the relay tells the host who sat down
     #[serde(default)]
     pub tally: Tally,
+    #[serde(default)]
+    pub say: String, // the one line this seat is showing, until it speaks again or the next deal
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -235,6 +241,16 @@ impl GameState {
         }
     }
 
+    /// Host-only: what `seat` is saying, replacing whatever it said before. An empty chair says
+    /// nothing. The text arrived from another computer, so it is trimmed, stripped of control
+    /// characters, and cut to MAX_SAY here rather than trusting the sender to have done it: the
+    /// table is printed straight to a terminal, and an escape sequence in it would be obeyed.
+    pub fn set_say(&mut self, seat: usize, raw: &str) {
+        if let Some(Some(chair)) = self.seats.get_mut(seat) {
+            chair.say = raw.trim().chars().filter(|c| !c.is_control()).take(MAX_SAY).collect();
+        }
+    }
+
     /// Host-only: the player in `seat` left. Their turn passes to the next player, and a round
     /// that everyone else was waiting on them for starts without them.
     pub fn leave(&mut self, seat: usize, shoe: &mut Vec<Card>) {
@@ -264,6 +280,7 @@ impl GameState {
             s.hand = vec![draw(shoe), draw(shoe)]; // name and tally stay with the person
             s.ready = false;
             s.result = None;
+            s.say = String::new(); // banter belongs to the hand it was about
         }
         self.phase = Phase::PlayerTurn;
         self.turn = DEALER;
@@ -682,6 +699,7 @@ mod tests {
         g.seats[DEALER].as_mut().unwrap().hand.push(Card { rank: 12, suit: 3 });
         g.seats[P2].as_mut().unwrap().result = Some(Outcome::Win);
         g.seats[P2].as_mut().unwrap().ready = true;
+        g.set_say(P2, "unlucky");
         g.sit(7);
         g.phase = Phase::RoundOver;
         g.turn = 4;
@@ -1075,9 +1093,46 @@ mod tests {
     }
 
     #[test]
+    fn what_a_seat_says_is_trimmed_cut_and_stripped_of_anything_a_terminal_would_obey() {
+        let mut g = table_of(&[P1]);
+        let said = |g: &GameState, seat: usize| g.seats[seat].as_ref().unwrap().say.clone();
+        g.set_say(P1, "  nice hand  ");
+        assert_eq!(said(&g, P1), "nice hand", "trimmed");
+        g.set_say(P1, "dealer always gets 21 somehow");
+        assert_eq!(said(&g, P1), "dealer always gets 21 so", "cut to MAX_SAY characters");
+        assert_eq!(said(&g, P1).chars().count(), MAX_SAY);
+        // the table is printed straight to a terminal, so an escape sequence must not survive
+        g.set_say(P1, "\u{1b}[2Jgotcha\ttab\nnewline");
+        assert_eq!(said(&g, P1), "[2Jgotchatabnewline");
+        g.set_say(P2, "nobody"); // empty chair
+        g.set_say(SEATS, "off the table");
+        assert_eq!(g.seats[P2], None);
+    }
+
+    #[test]
+    fn a_deal_clears_the_table_of_talk_and_a_freed_chair_forgets_it() {
+        let mut g = table_of(&[P1]);
+        g.set_say(DEALER, "place your bets");
+        g.set_say(P1, "here we go");
+        g.set_name(P1, "bob");
+        let mut shoe = fresh_shoe();
+        g.start_round(&mut shoe);
+        assert_eq!(g.seats[DEALER].as_ref().unwrap().say, "", "banter belongs to the hand it was about");
+        assert_eq!(g.seats[P1].as_ref().unwrap().say, "");
+        assert_eq!(g.seats[P1].as_ref().unwrap().name, "bob", "who you are survives the deal");
+        g.set_say(P1, "unlucky");
+        g.leave(P1, &mut shoe);
+        g.sit(P1);
+        assert_eq!(g.seats[P1].as_ref().unwrap().say, "", "the next person starts silent");
+    }
+
+    #[test]
     fn a_seat_without_a_name_or_tally_in_its_json_still_reads() {
         // the fields were added after the seat layout; a snapshot without them is a fresh seat
         let s: Seat = serde_json::from_str(r#"{"hand":[],"ready":true,"result":null}"#).unwrap();
         assert_eq!(s, Seat { ready: true, ..Default::default() });
+        // and `say` came later still, so a 0.3.0 snapshot is simply a seat saying nothing
+        let s: Seat = serde_json::from_str(r#"{"hand":[],"ready":false,"result":null,"name":"bob","tally":{"wins":1,"losses":0,"pushes":0}}"#).unwrap();
+        assert_eq!((s.name.as_str(), s.say.as_str()), ("bob", ""));
     }
 }

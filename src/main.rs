@@ -58,25 +58,32 @@ fn render(state: &GameState, me: usize) -> String {
         if !chair.name.is_empty() {
             out += &format!("  {} {}", chair.name, chair.tally.label());
         }
+        if !chair.say.is_empty() {
+            out += &format!("  \"{}\"", chair.say); // last, so a long line only ever wraps at the end
+        }
         out.push('\n');
     }
     out += &match state.to_act() {
-        Some(seat) if seat == me => "Your turn: (h)it, (s)tand, (q)uit".to_owned(),
-        Some(DEALER) => "Waiting for the dealer... (q)uit".to_owned(),
-        Some(seat) => format!("Waiting for player {seat}... (q)uit"),
-        None => "(r)eady for next round, (q)uit".to_owned(),
+        Some(seat) if seat == me => "Your turn: (h)it, (s)tand, (c)hat, (q)uit".to_owned(),
+        Some(DEALER) => "Waiting for the dealer... (c)hat, (q)uit".to_owned(),
+        Some(seat) => format!("Waiting for player {seat}... (c)hat, (q)uit"),
+        None => "(r)eady for next round, (c)hat, (q)uit".to_owned(),
     };
     out += "\n> ";
     out
 }
 
-/// The lifetime leaderboard as a table, the caller's own row marked.
-fn leaderboard(rows: &[Row]) -> String {
+/// The week's leaderboard as a table, the caller's own row marked. `week` labels the window the
+/// relay counted, and is empty against a relay from before the board was weekly, which leaves the
+/// table bare rather than claiming a week it did not filter on.
+fn leaderboard(week: &str, rows: &[Row]) -> String {
+    let mut out = if week.is_empty() { String::new() } else { format!("week of {week}\n\n") };
     if rows.is_empty() {
-        return "no hands recorded yet\n".into();
+        out += if week.is_empty() { "no hands recorded yet\n" } else { "no hands this week\n" };
+        return out;
     }
     let width = rows.iter().map(|r| r.name.chars().count()).max().unwrap_or(0).max(4);
-    let mut out = format!(" {:>2}  {:<width$}  {:>4} {:>4} {:>4}  hands\n", "#", "name", "W", "L", "P");
+    out += &format!(" {:>2}  {:<width$}  {:>4} {:>4} {:>4}  hands\n", "#", "name", "W", "L", "P");
     for (i, r) in rows.iter().enumerate() {
         let you = if r.you { "  (you)" } else { "" };
         out += &format!(" {:>2}  {:<width$}  {:>4} {:>4} {:>4}  {:>5}{you}\n", i + 1, r.name, r.wins, r.losses, r.pushes, r.hands);
@@ -87,7 +94,8 @@ fn leaderboard(rows: &[Row]) -> String {
 /// `blackjack scores`: no profile is made just to look.
 fn scores() -> Result<(), Box<dyn Error>> {
     let who = Profile::load()?.unwrap_or(Profile { id: String::new(), name: String::new() });
-    print!("{}", leaderboard(&net::scores(&who)?));
+    let (week, rows) = net::scores(&who)?;
+    print!("{}", leaderboard(&week, &rows));
     Ok(())
 }
 
@@ -152,6 +160,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     loop {
         let mut local_action = None;
+        let mut local_say = None;
         let mut changed = false;
         match rx.recv()? {
             Event::Line(line) => match line.trim() {
@@ -162,11 +171,21 @@ fn main() -> Result<(), Box<dyn Error>> {
                 "h" | "hit" => local_action = Some(Action::Hit),
                 "s" | "stand" => local_action = Some(Action::Stand),
                 "r" | "ready" => local_action = Some(Action::Ready),
+                "c" | "say" => println!("say what?  (c <message>)"),
+                // the only command that takes an argument; the rest of the line is the message
+                said if said.starts_with("c ") || said.starts_with("say ") => {
+                    local_say = said.split_once(' ').map(|(_, text)| text.to_owned());
+                }
                 "" => {}
-                other => println!("unknown command: {other:?}  (h/s/r/q)"),
+                other => println!("unknown command: {other:?}  (h/s/r/c/q)"),
             },
             Event::Net(from, Msg::Action(a)) if is_host => {
                 state.apply(from, a, &mut shoe);
+                out.send(Msg::State(Box::new(state.clone())));
+                changed = true;
+            }
+            Event::Net(from, Msg::Say(text)) if is_host => {
+                state.set_say(from, &text); // set_say does the trimming and cutting, not the sender
                 out.send(Msg::State(Box::new(state.clone())));
                 changed = true;
             }
@@ -208,6 +227,16 @@ fn main() -> Result<(), Box<dyn Error>> {
             } else {
                 out.send(Msg::Action(a));
                 // players wait for the host's State snapshot before redrawing
+            }
+        }
+
+        if let Some(text) = local_say {
+            if is_host {
+                state.set_say(DEALER, &text);
+                out.send(Msg::State(Box::new(state.clone())));
+                changed = true;
+            } else {
+                out.send(Msg::Say(text)); // as with an action, the snapshot is what redraws us
             }
         }
 
@@ -300,13 +329,13 @@ mod tests {
     fn a_fresh_table_is_the_dealer_alone_with_a_ready_flag() {
         assert_eq!(
             render(&GameState::new(), DEALER),
-            "\n===== Round 0 =====\n  Dealer (you)  :   [not ready]\n(r)eady for next round, (q)uit\n> "
+            "\n===== Round 0 =====\n  Dealer (you)  :   [not ready]\n(r)eady for next round, (c)hat, (q)uit\n> "
         );
         let mut g = GameState::new();
         g.sit(P1);
         assert_eq!(
             render(&g, P1),
-            "\n===== Round 0 =====\n  Dealer        :   [not ready]\n  Player 1 (you):   [not ready]\n(r)eady for next round, (q)uit\n> "
+            "\n===== Round 0 =====\n  Dealer        :   [not ready]\n  Player 1 (you):   [not ready]\n(r)eady for next round, (c)hat, (q)uit\n> "
         );
     }
 
@@ -421,19 +450,19 @@ mod tests {
             g.seats[P2] = chair(&[8, 8], 2);
             g
         };
-        assert_eq!(prompt(&at(Phase::PlayerTurn), P1), "Your turn: (h)it, (s)tand, (q)uit");
-        assert_eq!(prompt(&at(Phase::PlayerTurn), P2), "Waiting for player 1... (q)uit");
-        assert_eq!(prompt(&at(Phase::PlayerTurn), DEALER), "Waiting for player 1... (q)uit");
+        assert_eq!(prompt(&at(Phase::PlayerTurn), P1), "Your turn: (h)it, (s)tand, (c)hat, (q)uit");
+        assert_eq!(prompt(&at(Phase::PlayerTurn), P2), "Waiting for player 1... (c)hat, (q)uit");
+        assert_eq!(prompt(&at(Phase::PlayerTurn), DEALER), "Waiting for player 1... (c)hat, (q)uit");
         let mut g = at(Phase::PlayerTurn);
         g.turn = P2;
-        assert_eq!(prompt(&g, P1), "Waiting for player 2... (q)uit");
-        assert_eq!(prompt(&g, P2), "Your turn: (h)it, (s)tand, (q)uit");
-        assert_eq!(prompt(&at(Phase::DealerTurn), DEALER), "Your turn: (h)it, (s)tand, (q)uit");
-        assert_eq!(prompt(&at(Phase::DealerTurn), P1), "Waiting for the dealer... (q)uit");
-        assert_eq!(prompt(&at(Phase::DealerTurn), P2), "Waiting for the dealer... (q)uit");
+        assert_eq!(prompt(&g, P1), "Waiting for player 2... (c)hat, (q)uit");
+        assert_eq!(prompt(&g, P2), "Your turn: (h)it, (s)tand, (c)hat, (q)uit");
+        assert_eq!(prompt(&at(Phase::DealerTurn), DEALER), "Your turn: (h)it, (s)tand, (c)hat, (q)uit");
+        assert_eq!(prompt(&at(Phase::DealerTurn), P1), "Waiting for the dealer... (c)hat, (q)uit");
+        assert_eq!(prompt(&at(Phase::DealerTurn), P2), "Waiting for the dealer... (c)hat, (q)uit");
         for phase in [Phase::WaitingForReady, Phase::RoundOver] {
             for me in [DEALER, P1, P2] {
-                assert_eq!(prompt(&at(phase), me), "(r)eady for next round, (q)uit");
+                assert_eq!(prompt(&at(phase), me), "(r)eady for next round, (c)hat, (q)uit");
             }
         }
     }
@@ -443,7 +472,7 @@ mod tests {
         let mut g = table(&[10, 7], &[9, 5], Phase::PlayerTurn);
         g.sit(P2);
         assert_eq!(line_for(&render(&g, P2), "Player 2"), "  Player 2 (you): joins next round");
-        assert_eq!(prompt(&g, P2), "Waiting for player 1... (q)uit");
+        assert_eq!(prompt(&g, P2), "Waiting for player 1... (c)hat, (q)uit");
         g.phase = Phase::RoundOver;
         set_result(&mut g, P1, Outcome::Win);
         assert_eq!(line_for(&render(&g, P2), "Player 2"), "  Player 2 (you):   [not ready]", "nothing to show for a hand never dealt");
@@ -455,7 +484,7 @@ mod tests {
         let g = table(&[10, 7], &[9, 5], Phase::PlayerTurn);
         let out = render(&g, 6);
         assert!(!out.contains("(you)"), "{out}");
-        assert_eq!(prompt(&g, 6), "Waiting for player 1... (q)uit");
+        assert_eq!(prompt(&g, 6), "Waiting for player 1... (c)hat, (q)uit");
     }
 
     #[test]
@@ -494,6 +523,19 @@ mod tests {
     }
 
     #[test]
+    fn a_seat_that_said_something_shows_it_at_the_end_of_its_line() {
+        let mut g = table(&[10, 7], &[9, 5], Phase::RoundOver);
+        g.set_name(P1, "bob");
+        g.set_say(P1, "unlucky");
+        g.set_say(DEALER, "place your bets");
+        let out = render(&g, P1);
+        assert_eq!(line_for(&out, "Player 1"), "  Player 1 (you): 10♠ 7♠  = 17  [not ready]  bob 0W 0L 0P  \"unlucky\"");
+        assert_eq!(line_for(&out, "Dealer"), "  Dealer        : 9♥ 5♥  = 14  [not ready]  \"place your bets\"", "an unnamed seat can still talk");
+        g.set_say(P1, "");
+        assert_eq!(line_for(&render(&g, P1), "Player 1"), "  Player 1 (you): 10♠ 7♠  = 17  [not ready]  bob 0W 0L 0P", "saying nothing shows nothing");
+    }
+
+    #[test]
     fn an_unnamed_seat_shows_no_tally() {
         let mut g = table(&[10, 7], &[9, 5], Phase::RoundOver);
         g.seats[P1].as_mut().unwrap().tally.record(Outcome::Win);
@@ -508,14 +550,29 @@ mod tests {
     fn the_leaderboard_is_a_ranked_table_with_our_row_marked() {
         let rows = [row("alice", 12, 8, 2, false), row("bob", 8, 12, 2, true), row("a-longer-name", 0, 0, 0, false)];
         assert_eq!(
-            leaderboard(&rows),
+            leaderboard("14 sep - 20 sep", &rows),
             concat!(
+                "week of 14 sep - 20 sep\n",
+                "\n",
                 "  #  name              W    L    P  hands\n",
                 "  1  alice            12    8    2     22\n",
                 "  2  bob               8   12    2     22  (you)\n",
                 "  3  a-longer-name     0    0    0      0\n",
             )
         );
-        assert_eq!(leaderboard(&[]), "no hands recorded yet\n");
+        assert_eq!(leaderboard("14 sep - 20 sep", &[]), "week of 14 sep - 20 sep\n\nno hands this week\n");
+    }
+
+    #[test]
+    fn the_leaderboard_drops_the_header_when_the_relay_names_no_week() {
+        let rows = [row("alice", 12, 8, 2, false)];
+        assert_eq!(
+            leaderboard("", &rows),
+            concat!(
+                "  #  name      W    L    P  hands\n", //
+                "  1  alice    12    8    2     22\n",
+            )
+        );
+        assert_eq!(leaderboard("", &[]), "no hands recorded yet\n");
     }
 }

@@ -1,5 +1,8 @@
 {
   "name": "blackjack-tui",
   "private": true,
-  "scripts": { "release": "./scripts/release.sh" }
+  "scripts": {
+    "release": "./scripts/release.sh",
+    "deploy:relay": "./scripts/deploy-relay.sh"
+  }
 }

@@ -129,6 +129,9 @@ Each player is settled separately against the dealer: WIN with a higher total
 or when the dealer busts, LOSE with a lower total, PUSH on a tie. The result
 appears on each player's line; the dealer's line has no single result.
 
+Type `c` and a message to say something to the table: `c nice hand`. It appears
+in quotes at the end of your seat's line for everyone to see (see [Chat](#chat)).
+
 After the round, everyone types `r` and presses Enter to play again. A player
 who types `q` and presses Enter leaves the table and the game carries on
 without them; if it was their turn, the turn passes on, and if the others were
@@ -141,7 +144,7 @@ room for everyone.
 |---------|---------|
 | `blackjack host` | Create a room, print its code, and play as the dealer |
 | `blackjack join KQZP` | Join an existing room using its code and play a hand against the dealer |
-| `blackjack scores` | Print the lifetime leaderboard kept by the relay |
+| `blackjack scores` | Print this week's leaderboard kept by the relay |
 | `blackjack name` | Show the name and profile file this computer plays under |
 | `blackjack name Zed` | Change that name; your record on the scoreboard follows you |
 | `blackjack --version` | Print the installed version, useful when checking everyone is on the same one |
@@ -153,6 +156,7 @@ All in-game controls require Enter:
 | `h` | Hit |
 | `s` | Stand |
 | `r` | Ready for the first or next round |
+| `c <text>` | Say something; it shows beside your seat |
 | `q` | Quit |
 
 ## Scores
@@ -168,10 +172,12 @@ from `0W 0L 0P`.
   Player 1 (you): 10♠ 7♠  = 17  WIN  [not ready]  bob 2W 0L 1P
 ```
 
-The relay also keeps a lifetime scoreboard across every room it has hosted.
-`blackjack scores` prints it, with your own row marked:
+The relay also keeps a scoreboard across every room it has hosted.
+`blackjack scores` prints the current week, with your own row marked:
 
 ```text
+week of 14 sep - 20 sep
+
   #  name           W    L    P  hands
   1  alice         12    8    2     22
   2  bob            8   12    2     22  (you)
@@ -180,6 +186,13 @@ The relay also keeps a lifetime scoreboard across every room it has hosted.
 A hand counts once for the player and once, the other way round, for the dealer.
 Only hands that were actually played are counted; readying up and leaving
 change nothing.
+
+The week runs Monday to Sunday and turns over at midnight Singapore time, so
+everyone sees the same week wherever they are playing from. Nothing is deleted
+when it turns over: last week's hands stay in the relay's database and simply
+stop being counted, so the board starts each Monday at `0W 0L 0P` for everyone.
+The relay decides where the week starts, which means the rule can change without
+anyone reinstalling.
 
 ### Who you are
 
@@ -197,6 +210,31 @@ leaderboard; whoever has the file plays as you, so treat it like a saved game.
   scored against each other.
 - A seat that gave the relay no name (an empty profile, or a client that could
   not save one) plays normally but is never scored.
+
+## Chat
+
+Type `c` and a message during play to say something:
+
+```sh
+c dealer always wins
+```
+
+It shows in quotes at the end of your seat's line, so banter sits next to the hand
+it is about:
+
+```text
+  Dealer        : 9♥ 5♥  = 14  [not ready]  alice 5W 3L 1P  "place your bets"
+  Player 1 (you): 10♠ 7♠  = 17  WIN  [not ready]  bob 2W 0L 1P  "dealer always wins"
+```
+
+One line per seat: saying something again replaces what you said before, and the
+whole table is cleared when the next round is dealt. Messages are cut to 24
+characters, and anything a terminal would treat as a command rather than text is
+stripped out before the line is shown.
+
+There is no chat channel and no history. What you say is part of the table the
+host broadcasts, the same as your cards and your tally, which is why the relay
+needs no scrollback and a player who leaves takes their line with them.
 
 ## Run directly from a source checkout
 
@@ -222,8 +260,10 @@ cargo run --release -- join KQZP
 The first run compiles the program and can take a minute. Both commands use the
 hosted Cloudflare relay automatically.
 
-Everyone at the table must run 0.3.0 or later: the table now carries up to nine
-hands, and an older client cannot read it. To replace an older installed binary
+Everyone at the table must run 0.4.0 or later: 0.3.0 added up to nine hands to
+the table and 0.4.0 added chat, and a client older than the host cannot read
+either. An old host that is sent a chat message drops the room for everyone, so
+upgrade the whole table together. To replace an older installed binary
 with your checkout, run `cargo install --path . --force`.
 
 ## Troubleshooting
@@ -242,7 +282,8 @@ with your checkout, run `cargo install --path . --force`.
   0.3.0 need a relay that numbers seats; if you host your own relay, redeploy it
   from `worker/`.
 - **`unreadable game message (is everyone on the same version?)`**: The host and
-  a player are running different versions. Everyone needs 0.3.0 or later.
+  a player are running different versions. Everyone needs 0.4.0 or later. The
+  usual cause is someone on 0.3.0 at a table where chat is being used.
 - **`no name given; set BLACKJACK_NAME or run: blackjack name <NAME>`**: The game
   needed a name and could not ask for one (no terminal, or an empty answer). Run
   `blackjack name Zed` once, or set `BLACKJACK_NAME`.
@@ -321,8 +362,9 @@ The relay never reads the game state. Each client tells it who is sitting down
 when it opens or joins a room, and after each round the host `POST`s the settled
 hands to `/room/CODE/result` as seat numbers and outcomes. The relay matches
 seats to the ids it was given and writes one row per hand to D1; `POST /scores`
-is a `GROUP BY` over those rows. A round reported twice (a retried request) is
-counted once, and a failed write is logged, never answered, so a slow or absent
+is a `GROUP BY` over the rows whose `played` timestamp falls in the current week,
+which is where the weekly reset comes from. A round reported twice (a retried
+request) is counted once, and a failed write is logged, never answered, so a slow or absent
 database cannot hold up play.
 
 ## Running the tests
@@ -346,7 +388,7 @@ Everything runs offline in a couple of seconds:
   quit, the `/scores` answer).
 - `src/main.rs`: what each seat sees on the table (hidden hole card, turn marker,
   ready flags, WIN/LOSE/PUSH/BUST per player, names and tallies, prompts) and the
-  leaderboard layout.
+  leaderboard layout, with and without the week heading.
 - `tests/cli.rs`: the built binary end to end against the fake relay (usage and exit
   codes, relay refusals, a missing name, `blackjack name`, `blackjack scores`, the
   host announcing a room and greeting a named joiner, the joiner drawing the
@@ -373,4 +415,5 @@ If a run dies partway (network, `gh` login), fix the cause and run
 
 The relay is deployed separately: after changing `worker/`, run `npx wrangler
 deploy` from that directory. A release that changes the wire format (as 0.3.0
-did) needs the relay deployed first.
+did) needs the relay deployed first. 0.4.0's chat is carried inside the table the
+host already broadcasts, so it changed no relay code and needed no deploy.

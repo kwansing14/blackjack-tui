@@ -19,8 +19,9 @@ import { DurableObject } from "cloudflare:workers";
 //                                   gets 410), a player leaving frees their seat
 //   send/poll/result/leave carry `Authorization: Bearer <token>`.
 //
-//   POST /scores                    body = {id?}  -> {rows:[{name,wins,losses,pushes,hands,you}]}
-//                                   the lifetime leaderboard from D1; `you` marks the caller's row
+//   POST /scores                    body = {id?}  -> {week, rows:[{name,wins,losses,pushes,hands,you}]}
+//                                   this week's leaderboard from D1; `you` marks the caller's row
+//                                   and `week` labels the window, for example "14 sep - 20 sep"
 
 const HOLD_MS = 20_000; // how long an empty /poll waits before answering
 const STALE_MS = 45_000; // a player silent this long is gone (clients re-poll every ~20s)
@@ -29,6 +30,9 @@ const SEATS = 10; // the host and nine players
 const HOST = 0;
 const OUTCOMES = ["Win", "Lose", "Push"] as const;
 const TOP = 50; // leaderboard rows
+const DAY_MS = 86_400_000;
+const WEEK_TZ_OFFSET_MS = 8 * 60 * 60 * 1000; // the week turns over at midnight in Singapore, which has no DST
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
 type Env = { ROOM: DurableObjectNamespace<Room>; DB?: D1Database };
 type Outcome = (typeof OUTCOMES)[number];
@@ -250,12 +254,26 @@ export class Room extends DurableObject<Env> {
   }
 }
 
+/** The Monday-to-Sunday window `now` falls in, as UTC ms, labelled like "14 sep - 20 sep". */
+const week = (now: number) => {
+  const days = Math.floor((now + WEEK_TZ_OFFSET_MS) / DAY_MS);
+  const start = (days - ((days + 3) % 7)) * DAY_MS - WEEK_TZ_OFFSET_MS; // epoch day 0 is a Thursday, so +3 makes Monday 0
+  const end = start + 7 * DAY_MS;
+  const day = (ms: number) => {
+    const d = new Date(ms + WEEK_TZ_OFFSET_MS); // shifted, so the UTC fields read as Singapore wall clock
+    return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
+  };
+  return { start, end, label: `${day(start)} - ${day(end - 1)}` };
+};
+
 // Every hand counts once for the player and once, the other way round, for the dealer.
+// Both halves are windowed: hands outside the week simply are not counted, and nothing is deleted.
 const LEADERBOARD =
   "WITH seat AS (" +
-  "  SELECT player AS id, outcome FROM hands" +
+  "  SELECT player AS id, outcome FROM hands WHERE played >= ?2 AND played < ?3" +
   "  UNION ALL" +
   "  SELECT dealer, CASE outcome WHEN 'Win' THEN 'Lose' WHEN 'Lose' THEN 'Win' ELSE 'Push' END FROM hands" +
+  "    WHERE played >= ?2 AND played < ?3" +
   ") " +
   "SELECT p.name, SUM(outcome = 'Win') AS wins, SUM(outcome = 'Lose') AS losses, SUM(outcome = 'Push') AS pushes, " +
   "  COUNT(*) AS hands, COALESCE(p.id = ?1, 0) AS you " +
@@ -264,14 +282,15 @@ const LEADERBOARD =
 
 type LeaderboardRow = { name: string; wins: number; losses: number; pushes: number; hands: number; you: number };
 
-/** The lifetime leaderboard. Ids never leave the relay; the caller's own row is marked instead. */
+/** This week's leaderboard. Ids never leave the relay; the caller's own row is marked instead. */
 async function scores(req: Request, env: Env): Promise<Response> {
   if (!env.DB) return reply("this relay keeps no scores", 501);
   const v = parse(await req.text());
   const id = typeof v?.id === "string" ? v.id : "";
+  const w = week(Date.now());
   try {
-    const { results } = await env.DB.prepare(LEADERBOARD).bind(id).all<LeaderboardRow>();
-    return json({ rows: results.map((r) => ({ ...r, you: r.you === 1 })) });
+    const { results } = await env.DB.prepare(LEADERBOARD).bind(id, w.start, w.end).all<LeaderboardRow>();
+    return json({ week: w.label, rows: results.map((r) => ({ ...r, you: r.you === 1 })) });
   } catch (e) {
     console.error("scoreboard read failed", e);
     return reply("scoreboard unavailable, try again", 503);

@@ -278,7 +278,7 @@ fn name_shows_sets_and_keeps_the_saved_profile() {
 
 #[test]
 fn scores_prints_the_leaderboard_with_our_row_marked() {
-    let rows = serde_json::json!({ "rows": [
+    let rows = serde_json::json!({ "week": "14 sep - 20 sep", "rows": [
         { "name": "alice", "wins": 12, "losses": 8, "pushes": 2, "hands": 22, "you": false },
         { "name": "tester", "wins": 1, "losses": 0, "pushes": 0, "hands": 1, "you": true },
     ] });
@@ -287,7 +287,7 @@ fn scores_prints_the_leaderboard_with_our_row_marked() {
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(
         text(&out.stdout),
-        "  #  name       W    L    P  hands\n  1  alice     12    8    2     22\n  2  tester     1    0    0      1  (you)\n"
+        "week of 14 sep - 20 sep\n\n  #  name       W    L    P  hands\n  1  alice     12    8    2     22\n  2  tester     1    0    0      1  (you)\n"
     );
     assert_eq!(relay.paths(), ["/scores"]);
 }
@@ -349,7 +349,7 @@ fn the_host_announces_the_room_shows_the_table_and_leaves_when_the_relay_closes_
     assert!(stdout.contains("===== Round 0 ====="), "{stdout}");
     assert!(stdout.contains("  Dealer (you)  :   [not ready]"), "{stdout}");
     assert!(!stdout.contains("Player"), "nobody has joined yet:\n{stdout}");
-    assert!(stdout.contains("(r)eady for next round, (q)uit"), "{stdout}");
+    assert!(stdout.contains("(r)eady for next round, (c)hat, (q)uit"), "{stdout}");
     assert!(stdout.ends_with("host quit, bye\n"), "{stdout}");
 
     let paths = relay.paths();
@@ -371,6 +371,19 @@ fn the_host_seats_a_joiner_and_sends_them_the_table() {
     let sends: Vec<&String> = paths.iter().filter(|p| p.contains("/send?")).collect();
     assert_eq!(sends.len(), 1, "one snapshot goes out for the newcomer: {paths:?}");
     assert!(paths.iter().any(|p| p.ends_with("/poll?after=1")), "the joined event is acked: {paths:?}");
+}
+
+#[test]
+fn the_host_hangs_a_players_chat_on_their_seat_and_strips_what_a_terminal_would_obey() {
+    // seat 3 joins, then says something with an escape sequence and more than MAX_SAY characters
+    let said = serde_json::json!({ "Say": "\u{1b}[2Jdealer always gets 21 somehow" }).to_string();
+    let relay = FakeRelay::start((201, r#"{"token":"h","seat":0}"#), Some(inbox(&[(1, 3, "joined"), (2, 3, &said)])));
+    let out = blackjack(&["host"], &relay.url);
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "stdout:\n{stdout}\nstderr:\n{}", text(&out.stderr));
+    assert!(stdout.contains(r#"  Player 3      :   [not ready]  "[2Jdealer always gets 21""#), "cut and made inert: {stdout}");
+    assert!(!stdout.contains('\u{1b}'), "no escape character reaches the terminal: {stdout:?}");
+    assert!(stdout.contains("  Dealer (you)  :   [not ready]  tester 0W 0L 0P\n"), "the dealer says nothing: {stdout}");
 }
 
 #[test]
@@ -396,7 +409,7 @@ fn the_joiner_draws_the_table_from_the_hosts_first_snapshot() {
     assert!(stdout.contains("===== Round 1 ====="), "{stdout}");
     assert!(stdout.contains("  Dealer        : 9♥ ??"), "{stdout}");
     assert!(stdout.contains("> Player 4 (you): 10♠ 7♠  = 17"), "{stdout}");
-    assert!(stdout.contains("Your turn: (h)it, (s)tand, (q)uit"), "{stdout}");
+    assert!(stdout.contains("Your turn: (h)it, (s)tand, (c)hat, (q)uit"), "{stdout}");
     assert!(stdout.ends_with("host quit, bye\n"), "{stdout}");
 
     let paths = relay.paths();

@@ -24,6 +24,7 @@ p3 = spawn("p3", "join", code); time.sleep(0.8)
 nosuch = refused("p4", "join", "ZZZZ"); print("NO ROOM:", nosuch.returncode, nosuch.stderr.strip())
 
 for p in (host, p1, p2, p3): cmd(p, "r")
+cmd(p1, "c nice hand"); cmd(host, "c place your bets")  # chat rides the table snapshot, not its own channel
 cmd(p1, "s"); cmd(p2, "s"); cmd(p3, "s"); cmd(host, "s")  # players in seat order, then the host as dealer
 cmd(p2, "q"); p2out = finish(p2, "P2")  # one player leaves; the table carries on
 extras = [spawn(f"x{i}", "join", code) for i in range(7)]; time.sleep(2.5)  # seats 2 and 4..9
@@ -43,6 +44,9 @@ assert "Player 1 (you)" not in hout and "Dealer (you)" not in p1out
 assert "as player 1," in p1out and "as player 2," in p2out and "as player 3," in p3out
 for n in (1, 2, 3): assert f"player {n} ({RUN}-p{n}) joined" in hout, f"host never saw player {n} by name"
 assert "player 2 left" in hout
+assert '"nice hand"' in hout, "the host hangs a player's chat on their seat"
+assert '"place your bets"' in p3out, "and it reaches the other players in the next snapshot"
+assert '"nice hand"' in p3out, "as does the player's own"
 assert hout.count("player 2 (") == 2, "the freed seat 2 is handed to the next joiner"
 for n in range(4, 10): assert f"player {n} (" in hout, f"host never saw player {n}"
 def results_per_table(out): return [len(re.findall(r"  (WIN|LOSE|PUSH)", t.split("\n>")[0])) for t in out.split("===== Round 1 =====")[1:]]
