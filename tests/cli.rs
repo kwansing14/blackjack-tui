@@ -197,7 +197,7 @@ fn no_arguments_prints_usage_and_exits_2() {
     let out = blackjack(&[], &dead_server());
     assert_eq!(out.status.code(), Some(2));
     let err = text(&out.stderr);
-    assert!(err.contains("usage: blackjack host"), "{err}");
+    assert!(err.contains("usage: blackjack host [--auto] [CODE]"), "{err}");
     assert!(err.contains("blackjack join <CODE>"), "{err}");
     assert!(out.stdout.is_empty());
 }
@@ -355,6 +355,54 @@ fn the_host_announces_the_room_shows_the_table_and_leaves_when_the_relay_closes_
     let paths = relay.paths();
     assert_eq!(paths[0], format!("/room/{code}/host"));
     assert!(paths.contains(&format!("/room/{code}/poll?after=0")), "{paths:?}");
+}
+
+#[test]
+fn a_host_given_a_code_opens_that_room_and_not_four_fresh_letters() {
+    let relay = FakeRelay::start((201, r#"{"token":"h","seat":0}"#), None);
+    let out = blackjack(&["host", "house"], &relay.url);
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "stdout:\n{stdout}\nstderr:\n{}", text(&out.stderr));
+    assert!(stdout.contains("room HOUSE open, waiting for players (up to 9) ..."), "{stdout}");
+    assert!(stdout.contains("players run:  blackjack join HOUSE"), "{stdout}");
+    assert_eq!(relay.paths()[0], "/room/HOUSE/host", "the house dealer is reachable at the same code tomorrow");
+}
+
+#[test]
+fn a_room_code_the_relay_could_not_route_is_refused_before_it_is_asked() {
+    let relay = FakeRelay::start((201, r#"{"token":"h","seat":0}"#), None);
+    for code in ["ab", "toolongforaroomcode", "ab cd", "who?"] {
+        for verb in ["host", "join"] {
+            let out = blackjack(&[verb, code], &relay.url);
+            assert_eq!(out.status.code(), Some(1), "{verb} {code:?}: {}", text(&out.stderr));
+            assert!(text(&out.stderr).contains("a room code is 4 to 8 letters or digits"), "{verb} {code:?}: {}", text(&out.stderr));
+        }
+    }
+    assert!(relay.paths().is_empty(), "a code the relay would 404 never costs a round trip: {:?}", relay.paths());
+}
+
+/// The house dealer: stdin is closed, nobody is at the keyboard, and the table still deals.
+/// Without this the room seats players and sits in WaitingForReady forever.
+#[test]
+fn an_auto_host_deals_with_nobody_at_the_keyboard() {
+    let ready = serde_json::json!({ "Action": "Ready" }).to_string();
+    let relay = FakeRelay::start((201, r#"{"token":"h","seat":0}"#), Some(inbox(&[(1, 3, "joined"), (2, 3, &ready)])));
+    let out = blackjack(&["host", "--auto", "HOUSE"], &relay.url);
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "stdout:\n{stdout}\nstderr:\n{}", text(&out.stderr));
+    assert!(stdout.contains("  Dealer (you)  :   [ready]  tester 0W 0L 0P\n"), "the house readies itself: {stdout}");
+    assert!(stdout.contains("===== Round 1 ====="), "and the player's ready is enough to deal: {stdout}");
+}
+
+#[test]
+fn a_plain_host_still_waits_to_be_told_to_deal() {
+    let ready = serde_json::json!({ "Action": "Ready" }).to_string();
+    let relay = FakeRelay::start((201, r#"{"token":"h","seat":0}"#), Some(inbox(&[(1, 3, "joined"), (2, 3, &ready)])));
+    let out = blackjack(&["host", "HOUSE"], &relay.url);
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "stdout:\n{stdout}\nstderr:\n{}", text(&out.stderr));
+    assert!(stdout.contains("  Dealer (you)  :   [not ready]  tester 0W 0L 0P\n"), "{stdout}");
+    assert!(!stdout.contains("===== Round 1 ====="), "nothing is played on the dealer's behalf: {stdout}");
 }
 
 #[test]

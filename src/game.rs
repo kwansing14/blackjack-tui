@@ -742,7 +742,10 @@ mod tests {
         // the dealer's ready stands: the first player to sit down and ready up starts it
         g.sit(P1);
         g.apply(P1, Action::Ready, &mut shoe);
-        assert_eq!((g.phase, g.round), (Phase::PlayerTurn, 1));
+        assert_eq!(g.round, 1);
+        if value(&g, P1) != 21 {
+            assert_eq!(g.phase, Phase::PlayerTurn); // a natural leaves nothing to decide
+        }
     }
 
     #[test]
@@ -991,7 +994,10 @@ mod tests {
         g.apply(P1, Action::Ready, &mut shoe);
         assert_eq!(g.phase, Phase::WaitingForReady);
         g.leave(P2, &mut shoe);
-        assert_eq!((g.phase, g.round, who_sits(&g)), (Phase::PlayerTurn, 1, vec![DEALER, P1]));
+        assert_eq!((g.round, who_sits(&g)), (1, vec![DEALER, P1]));
+        if value(&g, P1) != 21 {
+            assert_eq!(g.phase, Phase::PlayerTurn); // a natural leaves nothing to decide
+        }
     }
 
     #[test]

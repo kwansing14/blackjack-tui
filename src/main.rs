@@ -10,8 +10,19 @@ use std::io::Write;
 use std::sync::mpsc;
 
 fn usage() -> ! {
-    eprintln!("usage: blackjack host\n       blackjack join <CODE>\n       blackjack scores\n       blackjack name [NEW]\n       blackjack --version");
+    eprintln!("usage: blackjack host [--auto] [CODE]\n       blackjack join <CODE>\n       blackjack scores\n       blackjack name [NEW]\n       blackjack --version");
     std::process::exit(2);
+}
+
+/// A room code the relay will route: four to eight letters or digits, the shape
+/// `worker/src/index.ts` matches on. Checked here so a typo says so instead of coming back a 404.
+fn valid_code(code: &str) -> bool {
+    (4..=8).contains(&code.chars().count()) && code.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+}
+
+/// Four fresh letters, for a host who did not pick a code.
+fn fresh_code() -> String {
+    (0..4).map(|_| (b'A' + rand::random_range(0..26u8)) as char).collect()
 }
 
 fn cards(hand: &[Card]) -> String {
@@ -121,11 +132,41 @@ fn rename(new: Option<&str>) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// What the house plays for itself under `--auto`, when the table is waiting on seat 0: ready,
+/// so a round can start at all, then draw to 17 and stand. That is S17 -- the house stands on
+/// every 17, soft or hard, because `hand_value` has already counted each ace as whatever keeps
+/// the hand alive. While the players are still deciding there is nothing for it to do.
+fn house_action(state: &GameState) -> Option<Action> {
+    match state.phase {
+        Phase::WaitingForReady | Phase::RoundOver if !state.dealer().ready => Some(Action::Ready),
+        Phase::DealerTurn if hand_value(&state.dealer().hand) < 17 => Some(Action::Hit),
+        Phase::DealerTurn => Some(Action::Stand),
+        _ => None,
+    }
+}
+
+/// Plays the house's hand to a standstill and says whether anything happened. One turn can need
+/// several hits, and the stand that settles a round leaves the house ready for the next one --
+/// but that ready can never deal, because the round just played left every player un-ready. So
+/// the caller always gets a settled `RoundOver` to report, never a round dealt over the top of it.
+fn deal_out(state: &mut GameState, shoe: &mut Vec<Card>) -> bool {
+    let mut acted = false;
+    while let Some(a) = house_action(state) {
+        state.apply(DEALER, a, shoe);
+        acted = true;
+    }
+    acted
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // after the verb, the room code is the first thing that is not a flag
+    let auto = args.iter().skip(1).any(|a| a == "--auto");
+    let arg = args.iter().skip(1).find(|a| !a.starts_with('-'));
     let (role, code) = match args.first().map(String::as_str) {
-        Some("host") => ("host", (0..4).map(|_| (b'A' + rand::random_range(0..26u8)) as char).collect::<String>()),
-        Some("join") => ("join", args.get(1).unwrap_or_else(|| usage()).to_uppercase()),
+        // a house dealer has to be reachable at the same code tomorrow; a game between friends does not
+        Some("host") => ("host", arg.map_or_else(fresh_code, |c| c.to_uppercase())),
+        Some("join") => ("join", arg.unwrap_or_else(|| usage()).to_uppercase()),
         Some("scores") => return scores(),
         Some("name") => return rename(args.get(1).map(String::as_str)),
         Some("--version" | "-V" | "version") => {
@@ -134,10 +175,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         _ => usage(),
     };
+    if !valid_code(&code) {
+        return Err(format!("a room code is 4 to 8 letters or digits, not {code:?}").into());
+    }
     let who = Profile::load_or_create()?; // may ask for a name; stdin is still ours here
     let (tx, rx) = mpsc::channel();
     let (out, me) = net::connect(&code, role, &who, tx.clone())?;
     let is_host = me == DEALER;
+    let auto = auto && is_host; // there is no house to play from a player's seat
     if is_host {
         println!("room {code} open, waiting for players (up to {MAX_PLAYERS}) ...");
         println!("players run:  blackjack join {code}");
@@ -151,6 +196,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut reported = 0u32; // the last round whose results went to the scoreboard
     if is_host {
         state.set_name(DEALER, &who.name);
+    }
+    if auto {
+        deal_out(&mut state, &mut shoe); // ready before the first player arrives; there is nobody yet to send it to
     }
     // Joiners render when the host's first state arrives.
     if is_host {
@@ -238,6 +286,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             } else {
                 out.send(Msg::Say(text)); // as with an action, the snapshot is what redraws us
             }
+        }
+
+        // The house plays before anything is reported, so a round it settles here is scored in
+        // this pass rather than waiting on an event that may never come.
+        if auto && deal_out(&mut state, &mut shoe) {
+            out.send(Msg::State(Box::new(state.clone()))); // one snapshot for the whole turn: every card it drew is in it
+            changed = true;
         }
 
         // A round can end on an action or on a player leaving; either way it is reported once,
@@ -503,6 +558,104 @@ mod tests {
         assert_eq!(name(DEALER), "Dealer");
         assert_eq!(name(1), "Player 1");
         assert_eq!(name(MAX_PLAYERS), "Player 9");
+    }
+
+    // ---- room codes ---------------------------------------------------------------------
+
+    #[test]
+    fn a_room_code_is_four_to_eight_letters_or_digits() {
+        for ok in ["ABCD", "HOUSE", "A1B2C3D4", "0000"] {
+            assert!(valid_code(ok), "{ok}");
+        }
+        for bad in ["", "ABC", "ABCDEFGHI", "abcd", "AB CD", "AB-D", "HOUSE!", "HOU\u{20ac}E"] {
+            assert!(!valid_code(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_code_made_up_for_a_host_is_one_the_relay_would_route() {
+        for _ in 0..50 {
+            let code = fresh_code();
+            assert!(valid_code(&code), "{code}");
+            assert_eq!(code.chars().count(), 4);
+        }
+    }
+
+    // ---- the house dealer ---------------------------------------------------------------
+
+    #[test]
+    fn the_house_readies_itself_so_a_round_can_start() {
+        let mut g = GameState::new();
+        let mut shoe = vec![];
+        assert_eq!(house_action(&g), Some(Action::Ready));
+        assert!(deal_out(&mut g, &mut shoe));
+        assert!(g.dealer().ready);
+        assert_eq!(house_action(&g), None, "an empty table is ready and idle, not spinning");
+        assert_eq!(g.round, 0, "there is nobody to deal to");
+
+        g.sit(P1);
+        assert!(!deal_out(&mut g, &mut shoe), "already ready; the table waits on the player");
+        assert_eq!(g.round, 0);
+        g.apply(P1, Action::Ready, &mut shoe);
+        assert_eq!(g.round, 1, "the player is the last one the table was waiting for");
+    }
+
+    #[test]
+    fn the_house_draws_to_seventeen_and_stands_there() {
+        for (dealer, want) in [(&[10, 2][..], Action::Hit), (&[10, 6][..], Action::Hit), (&[10, 7][..], Action::Stand), (&[10, 10][..], Action::Stand)] {
+            let g = table(&[10, 7], dealer, Phase::DealerTurn);
+            assert_eq!(house_action(&g), Some(want), "dealer on {}", hand_value(&g.dealer().hand));
+        }
+    }
+
+    /// S17, pinned: an ace counted as eleven still makes seventeen, and seventeen is where it stops.
+    #[test]
+    fn the_house_stands_on_a_soft_seventeen() {
+        let g = table(&[10, 7], &[1, 6], Phase::DealerTurn);
+        assert_eq!(hand_value(&g.dealer().hand), 17, "A + 6 is a soft 17");
+        assert_eq!(house_action(&g), Some(Action::Stand), "soft or hard, seventeen is seventeen");
+    }
+
+    #[test]
+    fn one_call_plays_the_whole_house_turn_out_and_settles_the_round() {
+        let mut g = table(&[10, 7], &[2, 3], Phase::DealerTurn); // five: several hits short of standing
+        let mut shoe = vec![]; // empty, so the deal opens a fresh shoe of its own
+        assert!(deal_out(&mut g, &mut shoe));
+        assert_eq!(g.phase, Phase::RoundOver, "however many hits it took");
+        assert!(hand_value(&g.dealer().hand) >= 17, "{:?}", g.dealer().hand);
+        assert!(g.seats[P1].as_ref().unwrap().result.is_some(), "the players are paid");
+        assert!(g.dealer().ready, "and the house is ready before anyone asks");
+        assert_eq!(house_action(&g), None, "then it stops");
+    }
+
+    #[test]
+    fn the_house_leaves_the_players_to_their_own_turns() {
+        let mut g = table(&[10, 7], &[9, 5], Phase::PlayerTurn);
+        assert_eq!(house_action(&g), None, "it waits its turn like everyone else");
+        assert!(!deal_out(&mut g, &mut vec![]), "nothing is applied on its behalf");
+    }
+
+    /// The round a `--auto` host settles must still be there to report: `main` scores `RoundOver`,
+    /// so the ready that follows a settle must never deal the next round over the top of it. It
+    /// cannot, because the round just played left every player un-ready.
+    #[test]
+    fn settling_a_round_leaves_it_there_to_be_reported() {
+        let mut g = GameState::new();
+        let mut shoe = vec![];
+        g.sit(P1);
+        g.sit(P2);
+        deal_out(&mut g, &mut shoe); // the house readies
+        for seat in [P1, P2] {
+            g.apply(seat, Action::Ready, &mut shoe);
+        }
+        assert_eq!(g.round, 1, "a round is dealt once everyone has said they are ready");
+        while g.phase == Phase::PlayerTurn {
+            g.apply(g.turn, Action::Stand, &mut shoe);
+        }
+        assert!(deal_out(&mut g, &mut shoe), "the house has its own turn to play out");
+        assert_eq!((g.phase, g.round), (Phase::RoundOver, 1), "settled, and not dealt over");
+        assert!(g.dealer().ready, "ready for round 2, which still needs the players to say so");
+        assert!(!g.players().any(|(_, p)| p.ready), "and they have not");
     }
 
     // ---- names and scores ---------------------------------------------------------------
